@@ -5,6 +5,7 @@ vi.mock("twitter-api-v2", () => {
   const mockV2 = {
     me: vi.fn(),
     tweet: vi.fn(),
+    post: vi.fn(),
     deleteTweet: vi.fn(),
     singleTweet: vi.fn(),
     tweets: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("../../../src/auth/token-manager.js", () => ({
 }));
 
 import { TwitterApi } from "twitter-api-v2";
-import { createPost, deletePost, getPost, lookupPosts, getUserTimeline, getUserMentions, searchByConversation } from "../../../src/client/x-api.js";
+import { createPost, editPost, deletePost, getPost, lookupPosts, getUserTimeline, getUserMentions, searchByConversation } from "../../../src/client/x-api.js";
 import { clearRateLimits, updateFromHeaders } from "../../../src/client/rate-limiter.js";
 import { RateLimitError } from "../../../src/util/errors.js";
 
@@ -153,6 +154,47 @@ describe("x-api client", () => {
 
       await expect(createPost({ text: "blocked" })).rejects.toThrow(RateLimitError);
       expect(mockV2.tweet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("editPost", () => {
+    it("sends edit_options with previous_tweet_id", async () => {
+      mockV2.post.mockResolvedValue({ data: { id: "edited-123", text: "Updated text" } });
+      mockV2.singleTweet.mockResolvedValue(makeTweetResponse("edited-123", "Updated text"));
+
+      const result = await editPost("original-123", { text: "Updated text" });
+
+      expect(result.post.id).toBe("edited-123");
+      expect(result.post.text).toBe("Updated text");
+      expect(mockV2.post).toHaveBeenCalledWith("tweets", {
+        text: "Updated text",
+        edit_options: { previous_tweet_id: "original-123" },
+      });
+    });
+
+    it("includes media IDs when provided", async () => {
+      mockV2.post.mockResolvedValue({ data: { id: "edited-456", text: "With media" } });
+      mockV2.singleTweet.mockResolvedValue(makeTweetResponse("edited-456", "With media"));
+
+      await editPost("original-456", { text: "With media", mediaIds: ["m1"] });
+
+      expect(mockV2.post).toHaveBeenCalledWith("tweets", {
+        text: "With media",
+        edit_options: { previous_tweet_id: "original-456" },
+        media: { media_ids: ["m1"] },
+      });
+    });
+
+    it("throws when rate limited", async () => {
+      const futureReset = Math.floor(Date.now() / 1000) + 900;
+      updateFromHeaders("POST /2/tweets", {
+        "x-rate-limit-limit": "100",
+        "x-rate-limit-remaining": "0",
+        "x-rate-limit-reset": String(futureReset),
+      });
+
+      await expect(editPost("orig-1", { text: "blocked" })).rejects.toThrow(RateLimitError);
+      expect(mockV2.post).not.toHaveBeenCalled();
     });
   });
 

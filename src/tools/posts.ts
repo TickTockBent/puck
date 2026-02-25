@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createPost, deletePost, getPost, lookupPosts, searchByConversation } from "../client/x-api.js";
+import { createPost, editPost, deletePost, getPost, lookupPosts, searchByConversation } from "../client/x-api.js";
 import { validatePostText } from "../util/character-count.js";
 import { toPuckError, PuckApiError, ThreadPartialError } from "../util/errors.js";
 import type { PostData, ThreadCreateResult } from "../types.js";
@@ -34,6 +34,32 @@ export function registerPostTools(server: McpServer): void {
           poll: params.pollOptions && params.pollDurationMinutes
             ? { options: params.pollOptions, durationMinutes: params.pollDurationMinutes }
             : undefined,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify(toPuckError(err)) }] };
+      }
+    },
+  );
+
+  server.tool(
+    "puck_post_edit",
+    "Edit a post within the 30-minute / 5-edit window. Uses POST /2/tweets with edit_options.previous_tweet_id.",
+    {
+      previousPostId: z.string().describe("The ID of the post to edit"),
+      text: z.string().describe("The new post text (max 280 characters)"),
+      mediaIds: z.array(z.string()).optional().describe("Updated media IDs to attach"),
+    },
+    async (params) => {
+      const validation = validatePostText(params.text);
+      if (!validation.valid) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "content_too_long", message: validation.error }) }] };
+      }
+
+      try {
+        const result = await editPost(params.previousPostId, {
+          text: params.text,
+          mediaIds: params.mediaIds,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {

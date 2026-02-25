@@ -156,6 +156,43 @@ export async function createPost(params: PostCreateParams): Promise<PostResult> 
   }
 }
 
+export async function editPost(previousPostId: string, params: PostCreateParams): Promise<PostResult> {
+  const endpoint = normalizeEndpoint("POST", "/2/tweets");
+  checkRateLimit(endpoint);
+
+  const client = await getClient();
+
+  const body: Record<string, unknown> = {
+    text: params.text,
+    edit_options: { previous_tweet_id: previousPostId },
+  };
+
+  if (params.mediaIds && params.mediaIds.length > 0) {
+    body.media = { media_ids: params.mediaIds };
+  }
+
+  try {
+    // twitter-api-v2 doesn't expose edit natively; use the same POST /2/tweets
+    // endpoint with edit_options which the v2 client's .post() supports
+    const response = await (client.v2 as unknown as { post(route: string, body: Record<string, unknown>): Promise<{ data: { id: string; text: string } }> }).post("tweets", body);
+    decrementRemaining(endpoint);
+
+    const fullPost = await getPost(response.data.id);
+    return fullPost;
+  } catch (err) {
+    const puckError = toPuckError(err);
+    // Map X API-specific edit errors to appropriate codes
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("edit") && message.includes("window")) {
+      throw new PuckApiError("edit_expired", "Post is past the 30-minute edit window", { details: puckError });
+    }
+    if (message.includes("edit") && message.includes("limit")) {
+      throw new PuckApiError("edit_limit", "Post has reached the 5-edit maximum", { details: puckError });
+    }
+    throw new PuckApiError("api_error", `Failed to edit post: ${message}`, { details: puckError });
+  }
+}
+
 export async function deletePost(postId: string): Promise<{ deleted: boolean }> {
   const endpoint = normalizeEndpoint("DELETE", "/2/tweets/:id");
   checkRateLimit(endpoint);
