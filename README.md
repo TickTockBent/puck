@@ -67,6 +67,7 @@ On first connection, Puck opens your browser for X OAuth consent. Once authorize
 | Tool | Description |
 |------|-------------|
 | `puck_post_create` | Create a post (supports text, polls, reply settings, quote tweets, media) |
+| `puck_post_edit` | Edit a post within the 30-minute / 5-edit window |
 | `puck_post_delete` | Delete a post |
 | `puck_post_get` | Get a post by ID with full field expansion |
 | `puck_post_lookup` | Batch lookup posts by IDs (up to 100) |
