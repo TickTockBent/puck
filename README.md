@@ -46,11 +46,42 @@ On first connection, Puck opens your browser for X OAuth consent. Once authorize
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PUCK_CLIENT_ID` | Yes | X OAuth 2.0 Client ID |
+| `PUCK_CLIENT_ID` | For OAuth/write tools | X OAuth 2.0 Client ID |
 | `PUCK_REDIRECT_URI` | No | OAuth callback URI (default: `http://localhost:3000/oauth/callback`) |
 | `PUCK_TOKEN_PATH` | No | Token storage location (default: `~/.puck/tokens.json`) |
 | `PUCK_API_TIER` | No | API tier: `free`, `basic`, `pro`, `enterprise` (default: `basic`) |
 | `PUCK_LOG_LEVEL` | No | Logging level (default: `info`) |
+| `PUCK_READ_BACKEND` | No | Read backend: `x`, `twitter`, `oauth`, `hermes`, or `xquik` (default: OAuth when `PUCK_CLIENT_ID` is set, Hermes Tweet when only a Hermes/Xquik key is set) |
+| `HERMES_TWEET_API_KEY` | For Hermes read backend | Hermes Tweet API key |
+| `XQUIK_API_KEY` | For Hermes read backend | Xquik API key fallback |
+| `HERMES_TWEET_BASE_URL` | No | Hermes Tweet API base URL (default: `https://xquik.com`) |
+| `XQUIK_BASE_URL` | No | Xquik API base URL fallback |
+| `HERMES_TWEET_TIMEOUT_MS` | No | Hermes Tweet request timeout in milliseconds (default: `30000`) |
+
+### Optional Hermes Tweet Read Backend
+
+Puck can use Hermes Tweet/Xquik for selected read tools when X OAuth read access
+is unavailable. OAuth remains the default whenever `PUCK_CLIENT_ID` is set.
+Writes, edits, deletes, media upload, mentions, and authentication tools still
+use the X OAuth flow.
+
+```json
+{
+  "mcpServers": {
+    "puck": {
+      "command": "npx",
+      "args": ["@ticktockbent/puck"],
+      "env": {
+        "PUCK_READ_BACKEND": "hermes",
+        "HERMES_TWEET_API_KEY": "your_hermes_tweet_api_key"
+      }
+    }
+  }
+}
+```
+
+The Hermes read backend currently powers `puck_post_get`, `puck_post_lookup`,
+`puck_timeline_user`, and `puck_thread_get`.
 
 ## Tools
 

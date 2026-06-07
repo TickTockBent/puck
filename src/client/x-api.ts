@@ -21,6 +21,13 @@ import {
   DEFAULT_MEDIA_FIELDS,
   DEFAULT_EXPANSIONS,
 } from "./fields.js";
+import {
+  getHermesPost,
+  getHermesUserTimeline,
+  lookupHermesPosts,
+  searchHermesConversation,
+  shouldUseHermesReadBackend,
+} from "./hermes-read.js";
 import { toPuckError, PuckApiError } from "../util/errors.js";
 import type {
   PostData,
@@ -146,8 +153,8 @@ export async function createPost(params: PostCreateParams): Promise<PostResult> 
     const response = await client.v2.tweet(body as Parameters<typeof client.v2.tweet>[0]);
     decrementRemaining(endpoint);
 
-    // Fetch the full post to get all fields
-    const fullPost = await getPost(response.data.id);
+    // Fetch the full post through the authenticated X client that created it.
+    const fullPost = await getPostFromX(response.data.id);
     return fullPost;
   } catch (err) {
     throw new PuckApiError("api_error", `Failed to create post: ${err instanceof Error ? err.message : err}`, {
@@ -177,7 +184,7 @@ export async function editPost(previousPostId: string, params: PostCreateParams)
     const response = await (client.v2 as unknown as { post(route: string, body: Record<string, unknown>): Promise<{ data: { id: string; text: string } }> }).post("tweets", body);
     decrementRemaining(endpoint);
 
-    const fullPost = await getPost(response.data.id);
+    const fullPost = await getPostFromX(response.data.id);
     return fullPost;
   } catch (err) {
     const puckError = toPuckError(err);
@@ -211,6 +218,14 @@ export async function deletePost(postId: string): Promise<{ deleted: boolean }> 
 }
 
 export async function getPost(postId: string): Promise<PostResult> {
+  if (shouldUseHermesReadBackend()) {
+    return getHermesPost(postId);
+  }
+
+  return getPostFromX(postId);
+}
+
+async function getPostFromX(postId: string): Promise<PostResult> {
   const endpoint = normalizeEndpoint("GET", "/2/tweets/:id");
   checkRateLimit(endpoint);
 
@@ -230,6 +245,10 @@ export async function getPost(postId: string): Promise<PostResult> {
 }
 
 export async function lookupPosts(postIds: string[]): Promise<{ posts: PostData[] }> {
+  if (shouldUseHermesReadBackend()) {
+    return lookupHermesPosts(postIds);
+  }
+
   const endpoint = normalizeEndpoint("GET", "/2/tweets");
   checkRateLimit(endpoint);
 
@@ -251,6 +270,10 @@ export async function lookupPosts(postIds: string[]): Promise<{ posts: PostData[
 }
 
 export async function getUserTimeline(params: TimelineParams): Promise<TimelineResult> {
+  if (shouldUseHermesReadBackend()) {
+    return getHermesUserTimeline(params);
+  }
+
   const endpoint = normalizeEndpoint("GET", "/2/users/:id/tweets");
   checkRateLimit(endpoint);
 
@@ -371,6 +394,10 @@ export async function getMe(): Promise<PostData> {
 }
 
 export async function searchByConversation(conversationId: string, maxResults = 100): Promise<TimelineResult> {
+  if (shouldUseHermesReadBackend()) {
+    return searchHermesConversation(conversationId, maxResults);
+  }
+
   const endpoint = normalizeEndpoint("GET", "/2/tweets/search/recent");
   checkRateLimit(endpoint);
 
