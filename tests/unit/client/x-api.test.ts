@@ -53,6 +53,15 @@ import { clearRateLimits, updateFromHeaders } from "../../../src/client/rate-lim
 import { RateLimitError } from "../../../src/util/errors.js";
 
 const mockV2 = (TwitterApi as unknown as { mockV2: Record<string, ReturnType<typeof vi.fn>> }).mockV2;
+const readBackendEnvKeys = [
+  "PUCK_READ_BACKEND",
+  "HERMES_TWEET_API_KEY",
+  "XQUIK_API_KEY",
+  "HERMES_TWEET_BASE_URL",
+  "XQUIK_BASE_URL",
+  "HERMES_TWEET_TIMEOUT_MS",
+  "XQUIK_TIMEOUT_MS",
+];
 
 // Standard v2 tweet response shape
 function makeTweetResponse(id: string, text: string) {
@@ -98,10 +107,26 @@ function makePaginator(tweets: Array<{ id: string; text: string; author_id?: str
   };
 }
 
+function mockHermesFetch(payload: unknown): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 describe("x-api client", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     clearRateLimits();
+    process.env.PUCK_CLIENT_ID = "test-client-id";
+    for (const key of readBackendEnvKeys) {
+      delete process.env[key];
+    }
   });
 
   describe("createPost", () => {
@@ -218,6 +243,43 @@ describe("x-api client", () => {
       expect(result.post.text).toBe("Fetched post");
       expect(result.post.authorName).toBe("Test User");
     });
+
+    it("uses Hermes Tweet when explicitly configured", async () => {
+      process.env.PUCK_READ_BACKEND = "hermes";
+      process.env.HERMES_TWEET_API_KEY = "xq_test";
+      const fetchMock = mockHermesFetch({
+        tweet: {
+          id: "post-789",
+          text: "Hermes post",
+          author: { id: "user-2", name: "Hermes User", username: "hermesuser" },
+          public_metrics: { like_count: 3, retweet_count: 1 },
+        },
+      });
+
+      const result = await getPost("post-789");
+
+      expect(result.post.id).toBe("post-789");
+      expect(result.post.text).toBe("Hermes post");
+      expect(result.post.authorUsername).toBe("hermesuser");
+      expect(result.post.publicMetrics?.likeCount).toBe(3);
+      expect(mockV2.singleTweet).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toBe("https://xquik.com/api/v1/x/tweets/post-789");
+      expect(init).toMatchObject({ headers: { "x-api-key": "xq_test" } });
+    });
+
+    it("keeps OAuth as the default when a client ID is present", async () => {
+      process.env.HERMES_TWEET_API_KEY = "xq_test";
+      const fetchMock = mockHermesFetch({ tweet: { id: "unused", text: "unused" } });
+      mockV2.singleTweet.mockResolvedValue(makeTweetResponse("post-456", "Fetched post"));
+
+      const result = await getPost("post-456");
+
+      expect(result.post.text).toBe("Fetched post");
+      expect(mockV2.singleTweet).toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("lookupPosts", () => {
@@ -280,6 +342,35 @@ describe("x-api client", () => {
       await getUserTimeline({ userId: "user-1" });
       expect(mockV2.userTimeline).toHaveBeenCalledTimes(2);
     });
+
+    it("auto-selects Hermes Tweet for username timelines when no OAuth client is set", async () => {
+      delete process.env.PUCK_CLIENT_ID;
+      process.env.XQUIK_API_KEY = "xq_test";
+      const fetchMock = mockHermesFetch({
+        tweets: [
+          {
+            id: "h1",
+            text: "From Hermes",
+            author: { id: "user-3", username: "hermes" },
+          },
+        ],
+        nextToken: "next-cursor",
+      });
+
+      const result = await getUserTimeline({
+        username: "@hermes",
+        maxResults: 5,
+        paginationToken: "cursor-1",
+      });
+
+      expect(result.posts).toHaveLength(1);
+      expect(result.nextToken).toBe("next-cursor");
+      expect(mockV2.userTimeline).not.toHaveBeenCalled();
+      const [url] = fetchMock.mock.calls[0];
+      expect(String(url)).toBe(
+        "https://xquik.com/api/v1/x/tweets/search?q=from%3Ahermes&limit=5&cursor=cursor-1",
+      );
+    });
   });
 
   describe("getUserMentions", () => {
@@ -313,6 +404,25 @@ describe("x-api client", () => {
         expect.any(Object),
       );
       expect(result.posts).toHaveLength(2);
+    });
+
+    it("uses Hermes Tweet thread lookup when configured", async () => {
+      process.env.PUCK_READ_BACKEND = "xquik";
+      process.env.HERMES_TWEET_API_KEY = "bearer-token";
+      const fetchMock = mockHermesFetch({
+        tweets: [
+          { id: "t1", text: "Thread one", authorId: "user-1" },
+          { id: "t2", text: "Thread two", authorId: "user-1" },
+        ],
+      });
+
+      const result = await searchByConversation("conv-123", 2);
+
+      expect(result.posts).toHaveLength(2);
+      expect(mockV2.search).not.toHaveBeenCalled();
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toBe("https://xquik.com/api/v1/x/tweets/conv-123/thread?limit=2");
+      expect(init).toMatchObject({ headers: { authorization: "Bearer bearer-token" } });
     });
   });
 });
